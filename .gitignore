@@ -1,4 +1,7 @@
 #My own files:
+.vscode
+data
+run.sh
 Testing.ipynb
 
 
