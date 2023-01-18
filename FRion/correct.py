@@ -21,7 +21,7 @@ import numpy as np
 from astropy.io import fits as pf
 import os
 import sys
-from math import floor
+from math import floor, ceil
 
 
 def apply_correction_to_files(
@@ -291,29 +291,36 @@ def apply_correction_large_cube(
     Qout_hdu = pf.open(Qoutfile, mode="update", memmap=True)
     Uout_hdu = pf.open(Uoutfile, mode="update", memmap=True)
 
-    Npix = output_header["NAXIS1"] * output_header["NAXIS2"]
+    # Need to decide how to split the cube
+    nsplit_x = 10
+    nsplit_y = 10
+    size_x = ceil(int(output_header["NAXIS1"]) / nsplit_x)
+    size_y = ceil(int(output_header["NAXIS2"]) / nsplit_y)
 
-    for i in range(Npix):
-        x = i % output_header["NAXIS1"]
-        y = i // output_header["NAXIS1"]
-        if N_dim == 4:
-            Pdata = (
-                Qdata[:, :, y, x] + 1.0j * Udata[:, :, y, x]
-            )  # Input complex polarization
-        elif N_dim == 3:
-            Pdata = Qdata[:, y, x] + 1.0j * Udata[:, y, x]  # Input complex polarization
-        arrshape = np.array(Pdata.shape)  # the correction needs the same number of
-        arrshape[:] = 1  # axes as the input data
-        arrshape[N_dim - freq_axis] = theta.size  # (but they can all be degenerate)
-        Pcorr = np.true_divide(Pdata, np.reshape(theta, arrshape))
-        if N_dim == 4:
-            Qout_hdu[0].data[:, :, y, x] = Pcorr.real
-            Uout_hdu[0].data[:, :, y, x] = Pcorr.imag
-        elif N_dim == 3:
-            Qout_hdu[0].data[:, y, x] = Pcorr.real
-            Uout_hdu[0].data[:, y, x] = Pcorr.imag
-        if x == 0:
-            progress(40, i / Npix * 100)
+    # Get subcube
+    for i in range(nsplit_x):
+        xmin = i * size_x
+        xmax = (i + 1) * size_x
+        if (i + 1 == nsplit_x):
+            xmax = int(output_header["NAXIS1"])
+        for j in range(nsplit_y):
+            ymin = j * size_y
+            ymax = (j + 1) * size_y
+            if (j + 1 == nsplit_y):
+                ymax = int(output_header["NAXIS2"])
+
+            # Apply correction and update
+            if N_dim == 4:
+                Qcorr, Ucorr = correct_cubes(Qdata[:, :, ymin:ymax, xmin:xmax], Udata[:, :, ymin:ymax, xmin:xmax], theta)
+                Qout_hdu[0].data[:, :, ymin:ymax, xmin:xmax] = Qcorr
+                Uout_hdu[0].data[:, :, ymin:ymax, xmin:xmax] = Ucorr
+            elif N_dim == 3:
+                Qcorr, Ucorr = correct_cubes(Qdata[:, ymin:ymax, xmin:xmax], Udata[:, :, ymin:ymax, xmin:xmax], theta)
+                Qout_hdu[0].data[:, ymin:ymax, xmin:xmax] = Qcorr
+                Uout_hdu[0].data[:, ymin:ymax, xmin:xmax] = Ucorr
+
+            # Update progress
+            progress(40, (i * nsplit_x + j) / (nsplit_x * nsplit_y) * 100)
 
     Qout_hdu.flush()
     Uout_hdu.flush()
