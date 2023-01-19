@@ -18,10 +18,15 @@ footprint required.
 """
 
 import numpy as np
+from math import floor, ceil
 from astropy.io import fits as pf
 import os
 import sys
-from math import floor, ceil
+import logging
+import multiprocessing as mp
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 def apply_correction_to_files(
@@ -201,6 +206,23 @@ def progress(width, percent):
     sys.stdout.flush()
 
 
+def pool_correct_task(lock, task_queue, complete_queue):
+    """Task for correct_cubes() function to be run with multiprocessing.
+
+    """
+    while True:
+        try:
+            # Retrieve task parameter
+            region = task_queue.get_nowait()
+        except queue.Empty:
+            # Break if no more tasks
+            break
+        else:
+            # Run job
+            pid = os.getpid()
+            N_dim = len(region)
+
+
 def apply_correction_large_cube(
     Qfile, Ufile, predictionfile, Qoutfile, Uoutfile, overwrite=False
 ):
@@ -297,7 +319,8 @@ def apply_correction_large_cube(
     size_x = ceil(int(output_header["NAXIS1"]) / nsplit_x)
     size_y = ceil(int(output_header["NAXIS2"]) / nsplit_y)
 
-    # Get subcube
+    # Get subcubes
+    regions = []
     for i in range(nsplit_x):
         xmin = i * size_x
         xmax = (i + 1) * size_x
@@ -308,20 +331,26 @@ def apply_correction_large_cube(
             ymax = (j + 1) * size_y
             if (j + 1 == nsplit_y):
                 ymax = int(output_header["NAXIS2"])
-
-            # Apply correction and update
             if N_dim == 4:
-                Qcorr, Ucorr = correct_cubes(Qdata[:, :, ymin:ymax, xmin:xmax], Udata[:, :, ymin:ymax, xmin:xmax], theta)
-                Qout_hdu[0].data[:, :, ymin:ymax, xmin:xmax] = Qcorr
-                Uout_hdu[0].data[:, :, ymin:ymax, xmin:xmax] = Ucorr
+                regions.append((slice(None), slice(None), slice(ymin, ymax), slice(xmin, xmax)))
             elif N_dim == 3:
-                Qcorr, Ucorr = correct_cubes(Qdata[:, ymin:ymax, xmin:xmax], Udata[:, :, ymin:ymax, xmin:xmax], theta)
-                Qout_hdu[0].data[:, ymin:ymax, xmin:xmax] = Qcorr
-                Uout_hdu[0].data[:, ymin:ymax, xmin:xmax] = Ucorr
+                regions.append((slice(None), slice(ymin, ymax), slice(xmin, xmax)))
 
-            # Update progress
-            progress(40, (i * nsplit_x + j) / (nsplit_x * nsplit_y) * 100)
+    # Apply correction and update
+    for idx, r in enumerate(regions):
+        if N_dim == 4:
+            Qcorr, Ucorr = correct_cubes(Qdata[r[0], r[1], r[2], r[3]], Udata[r[0], r[1], r[2], r[3]], theta)
+            Qout_hdu[0].data[r[0], r[1], r[2], r[3]] = Qcorr
+            Uout_hdu[0].data[r[0], r[1], r[2], r[3]] = Ucorr
+        elif N_dim == 3:
+            Qcorr, Ucorr = correct_cubes(Qdata[r[0], r[2], r[3]], Udata[r[0], r[2], r[3]], theta)
+            Qout_hdu[0].data[r[0], r[2], r[3]] = Qcorr
+            Uout_hdu[0].data[r[0], r[2], r[3]] = Ucorr
 
+        # Update progress
+        progress(40, idx / len(regions) * 100)
+
+    # TODO: this causes padding issues with data
     Qout_hdu.flush()
     Uout_hdu.flush()
     Qout_hdu.close()
