@@ -100,7 +100,7 @@ def find_freq_axis(header):
         try:
             if "FREQ" in header["CTYPE" + str(i)].upper():
                 freq_axis = i
-        except:
+        except Exception:
             pass  # The try statement is needed for if the FITS header does not
             # have CTYPE keywords.
     return freq_axis
@@ -327,18 +327,14 @@ def apply_correction_large_cube(
     output_header.tofile(Qoutfile)
     with open(Qoutfile, "rb+") as fobj:
         fobj.seek(
-            len(output_header.tostring())
-            + (np.product(shape) * np.abs(output_header["BITPIX"] // 8))
-            - 1
+            len(output_header.tostring()) + (np.product(shape) * np.abs(output_header["BITPIX"] // 8)) - 1
         )
         fobj.write(b"\0")
 
     output_header.tofile(Uoutfile)
     with open(Uoutfile, "rb+") as fobj:
         fobj.seek(
-            len(output_header.tostring())
-            + (np.product(shape) * np.abs(output_header["BITPIX"] // 8))
-            - 1
+            len(output_header.tostring()) + (np.product(shape) * np.abs(output_header["BITPIX"] // 8)) - 1
         )
         fobj.write(b"\0")
 

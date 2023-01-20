@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 
 """
-Functions for predicting ionospheric Faraday rotation effects, both 
+Functions for predicting ionospheric Faraday rotation effects, both
 time-dependent and time-averaged.
-Uses RMextract package to get time-dependent ionospheric RMs for a given 
+Uses RMextract package to get time-dependent ionospheric RMs for a given
 observation, then performs the time-integration to work out the effective
-change in polarization angle, and the effective depolarization (together, 
+change in polarization angle, and the effective depolarization (together,
 called the ionospheric *modulation*, which is called Theta in the derivation).
 
 The ionospheric prediction is currently derived from RMExtract
-(https://github.com/lofar-astron/RMextract/). 
-Other ionosphere RM codes are available (ionFR, ALBUS) are available, but 
+(https://github.com/lofar-astron/RMextract/).
+Other ionosphere RM codes are available (ionFR, ALBUS) are available, but
 RMextract was selected for its ease of install and use.
 
 RMextract relies on external maps of Total Electron Content (TEC). Currently
 the CODG TEC maps are used (this is default for RMextract), but other data
-sources are available. Changing TEC sources would require changing the 
+sources are available. Changing TEC sources would require changing the
 RMExtract call in get_RM(). If anyone knows how to invoke RMExtract with
 alternative TEC sources, please consider contacting me or submitting a pull
 request to add that functionality.
@@ -23,14 +23,14 @@ request to add that functionality.
 Two command line functions are available and documented below:
     - predict(): time-averaged Faraday rotation.
     - timeseries(): time-dependent Faraday rotation.
-    
+
 
 """
 
 
 try:
     import RMextract.getRM as RME
-except:
+except Exception:
     # This is the easiest solution to the documentation problem:
     # This code needs to be importable when RMextract isn't installed, for
     # ReadTheDocs to work. Getting RMextract to install properly in RTD is too
@@ -61,9 +61,9 @@ def predict():
     descStr = """
     Calculate ionospheric Faraday rotation and predict time-integrated effect
     as a function of frequency.
-    Can determine the frequency, location, direction, and observation time 
+    Can determine the frequency, location, direction, and observation time
     parameters from a supplied FITS cube or PSRFITS file, if it has the correct
-    keywords, otherwise from those parameters must be supplied on the command 
+    keywords, otherwise from those parameters must be supplied on the command
     line.
     """
 
@@ -595,15 +595,13 @@ def get_parms_from_FITS(filename):
 
         if "STT_IMJD" in header.keys():
             start_time = Time(
-                float(header["STT_IMJD"])
-                + (float(header["STT_SMJD"]) + float(header["STT_OFFS"]))
-                / float(86400),
+                float(header["STT_IMJD"]) + (float(header["STT_SMJD"]) + float(header["STT_OFFS"])) / float(86400),
                 format="mjd",
             )
 
             try:
                 end_time = start_time + np.sum(hdulist["SUBINT"].data["TSUBINT"]) * u.s
-            except:
+            except Exception:
                 pass
 
         if "TELESCOP" in header.keys():
@@ -620,9 +618,7 @@ def get_parms_from_FITS(filename):
             dec = Angle(hdulist[0].header["DEC"], unit="deg")
 
         if (
-            "OBSFREQ" in header.keys()
-            and "OBSNCHAN" in header.keys()
-            and "OBSBW" in header.keys()
+            "OBSFREQ" in header.keys() and "OBSNCHAN" in header.keys() and "OBSBW" in header.keys()
         ):
             chan_bw = header["OBSBW"] / header["OBSNCHAN"]
 
@@ -691,8 +687,8 @@ def timeseries():
 
     descStr = """
     Calculate ionospheric Faraday rotation as a function of time.
-    Can determine the observation time, direction, and location parameters 
-    from a supplied FITS cube or PSRFITS file, if it has the correct keywords, 
+    Can determine the observation time, direction, and location parameters
+    from a supplied FITS cube or PSRFITS file, if it has the correct keywords,
     otherwise from those parameters must be supplied on the command line.
     """
 
@@ -750,7 +746,9 @@ def timeseries():
         type=str,
         default="mjd",
         metavar="TIMEFORMAT",
-        help="Format for times, must be one from list at https://docs.astropy.org/en/stable/time/index.html#time-format \n Default is mjd, for human-readable try fits.",
+        help="Format for times, must be one from list at \
+              https://docs.astropy.org/en/stable/time/index.html#time-format\n\
+              Default is mjd, for human-readable try fits.",
     )
     parser.add_argument(
         "-S",
