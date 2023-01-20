@@ -3,10 +3,7 @@
 
 import io
 import os
-import sys
-from shutil import rmtree
-
-from setuptools import find_packages, setup, Command
+from setuptools import setup
 
 NAME = 'FRion'
 DESCRIPTION = 'Ionospheric Faraday rotation prediction and correction for radio astronomy polarization cubes.'
@@ -17,9 +14,9 @@ DOWNLOAD_URL = 'https://github.com/Cameron-Van-Eck/FRion/archive/refs/heads/main
 
 REQUIRED = [
     'numpy', 'astropy', 'pyephem',
-    ]
+]
 
-extras_require={}
+extras_require = {}
 
 here = os.path.abspath(os.path.dirname(__file__))
 
