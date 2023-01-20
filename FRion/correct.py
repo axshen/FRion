@@ -22,6 +22,7 @@ from math import floor, ceil
 from astropy.io import fits as pf
 import os
 import sys
+import queue
 import logging
 import multiprocessing as mp
 
@@ -206,7 +207,7 @@ def progress(width, percent):
     sys.stdout.flush()
 
 
-def pool_correct_task(lock, task_queue, complete_queue):
+def pool_correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue, complete_queue):
     """Task for correct_cubes() function to be run with multiprocessing.
 
     """
@@ -218,9 +219,40 @@ def pool_correct_task(lock, task_queue, complete_queue):
             # Break if no more tasks
             break
         else:
-            # Run job
+            # Log process and job
             pid = os.getpid()
+            logging.info(f'[{pid}] Working on region {region}')
+
+            # Run job
             N_dim = len(region)
+            if N_dim == 4:
+                # Update data array
+                Qin = Qdata[region[0], region[1], region[2], region[3]]
+                Uin = Udata[region[0], region[1], region[2], region[3]]
+                Qcorr, Ucorr = correct_cubes(Qin, Uin, theta)
+            elif N_dim == 3:
+                Qin = Qdata[region[0], region[1], region[2]]
+                Uin = Udata[region[0], region[1], region[2]]
+                Qcorr, Ucorr = correct_cubes(Qin, Uin, theta)
+
+            # Write to file with lock
+            with lock:
+                logging.info(f'[{pid}]: Writing to output file')
+                Qout_hdu = pf.open(Qoutfile, mode="update", memmap=True)
+                Uout_hdu = pf.open(Uoutfile, mode="update", memmap=True)
+                if N_dim == 4:
+                    Qout_hdu[0].data[region[0], region[1], region[2], region[3]] = Qcorr
+                    Uout_hdu[0].data[region[0], region[1], region[2], region[3]] = Ucorr
+                elif N_dim == 3:
+                    Qout_hdu[0].data[region[0], region[1], region[2]] = Qcorr
+                    Uout_hdu[0].data[region[0], region[1], region[2]] = Ucorr
+                Qout_hdu.flush()
+                Uout_hdu.flush()
+                Qout_hdu.close()
+                Uout_hdu.close()
+
+            complete_queue.put(region)
+    return True
 
 
 def apply_correction_large_cube(
@@ -310,17 +342,22 @@ def apply_correction_large_cube(
         )
         fobj.write(b"\0")
 
-    Qout_hdu = pf.open(Qoutfile, mode="update", memmap=True)
-    Uout_hdu = pf.open(Uoutfile, mode="update", memmap=True)
-
     # Need to decide how to split the cube
     nsplit_x = 10
     nsplit_y = 10
     size_x = ceil(int(output_header["NAXIS1"]) / nsplit_x)
     size_y = ceil(int(output_header["NAXIS2"]) / nsplit_y)
 
+    # multiprocessing
+    n_processes = 4
+    processes = []
+    m = mp.Manager()
+    lock = mp.Lock()
+    task_queue = m.Queue()
+    complete_queue = m.Queue()
+
     # Get subcubes
-    regions = []
+    # regions = []
     for i in range(nsplit_x):
         xmin = i * size_x
         xmax = (i + 1) * size_x
@@ -332,29 +369,36 @@ def apply_correction_large_cube(
             if (j + 1 == nsplit_y):
                 ymax = int(output_header["NAXIS2"])
             if N_dim == 4:
-                regions.append((slice(None), slice(None), slice(ymin, ymax), slice(xmin, xmax)))
+                region = (slice(None), slice(None), slice(ymin, ymax), slice(xmin, xmax))
             elif N_dim == 3:
-                regions.append((slice(None), slice(ymin, ymax), slice(xmin, xmax)))
+                region = (slice(None), slice(ymin, ymax), slice(xmin, xmax))
+            # regions.append(region)
+            task_queue.put(region)
+    logging.info(f'Number of regions to process in parallel: {task_queue.qsize()}')
 
-    # Apply correction and update
-    for idx, r in enumerate(regions):
-        if N_dim == 4:
-            Qcorr, Ucorr = correct_cubes(Qdata[r[0], r[1], r[2], r[3]], Udata[r[0], r[1], r[2], r[3]], theta)
-            Qout_hdu[0].data[r[0], r[1], r[2], r[3]] = Qcorr
-            Uout_hdu[0].data[r[0], r[1], r[2], r[3]] = Ucorr
-        elif N_dim == 3:
-            Qcorr, Ucorr = correct_cubes(Qdata[r[0], r[2], r[3]], Udata[r[0], r[2], r[3]], theta)
-            Qout_hdu[0].data[r[0], r[2], r[3]] = Qcorr
-            Uout_hdu[0].data[r[0], r[2], r[3]] = Ucorr
+    # Large sequential update regions
+    # for r in regions:
+    #     Qin = Qdata[r[0], r[1], r[2], r[3]]
+    #     Uin = Udata[r[0], r[1], r[2], r[3]]
+    #     Qcorr, Ucorr = correct_cubes(Qin, Uin, theta)
+    #     Qdata[r[0], r[1], r[2], r[3]] = Qcorr
+    #     Udata[r[0], r[1], r[2], r[3]] = Ucorr
 
-        # Update progress
-        progress(40, idx / len(regions) * 100)
+    # Run in process pool
+    logging.info('Starting parallel region')
+    logging.info(f'Main process id: {os.getpid()}')
+    for pid in range(n_processes):
+        p = mp.Process(
+            target=pool_correct_task,
+            args=(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue, complete_queue)
+        )
+        processes.append(p)
+        p.start()
 
-    # TODO: this causes padding issues with data
-    Qout_hdu.flush()
-    Uout_hdu.flush()
-    Qout_hdu.close()
-    Uout_hdu.close()
+    for p in processes:
+        p.join()
+    logging.info('Finished parallel region')
+    logging.info('Write complete')
 
 
 def command_line():
