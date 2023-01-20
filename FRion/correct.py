@@ -207,10 +207,8 @@ def progress(width, percent):
     sys.stdout.flush()
 
 
-def pool_correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue, complete_queue):
-    """Task for correct_cubes() function to be run with multiprocessing.
-
-    """
+def correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue):
+    """Task for correct_cubes() function to be run with multiprocessing."""
     while True:
         try:
             # Retrieve task parameter
@@ -221,7 +219,7 @@ def pool_correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue,
         else:
             # Log process and job
             pid = os.getpid()
-            logging.info(f'[{pid}] Working on region {region}')
+            logging.info(f"[{pid}] Working on region {region}")
 
             # Run job
             N_dim = len(region)
@@ -237,7 +235,7 @@ def pool_correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue,
 
             # Write to file with lock
             with lock:
-                logging.info(f'[{pid}]: Writing to output file')
+                logging.info(f"[{pid}]: Writing to output file")
                 Qout_hdu = pf.open(Qoutfile, mode="update", memmap=True)
                 Uout_hdu = pf.open(Uoutfile, mode="update", memmap=True)
                 if N_dim == 4:
@@ -250,8 +248,6 @@ def pool_correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue,
                 Uout_hdu.flush()
                 Qout_hdu.close()
                 Uout_hdu.close()
-
-            complete_queue.put(region)
     return True
 
 
@@ -354,51 +350,45 @@ def apply_correction_large_cube(
     m = mp.Manager()
     lock = mp.Lock()
     task_queue = m.Queue()
-    complete_queue = m.Queue()
 
     # Get subcubes
-    # regions = []
     for i in range(nsplit_x):
         xmin = i * size_x
         xmax = (i + 1) * size_x
-        if (i + 1 == nsplit_x):
+        if i + 1 == nsplit_x:
             xmax = int(output_header["NAXIS1"])
         for j in range(nsplit_y):
             ymin = j * size_y
             ymax = (j + 1) * size_y
-            if (j + 1 == nsplit_y):
+            if j + 1 == nsplit_y:
                 ymax = int(output_header["NAXIS2"])
             if N_dim == 4:
-                region = (slice(None), slice(None), slice(ymin, ymax), slice(xmin, xmax))
+                region = (
+                    slice(None),
+                    slice(None),
+                    slice(ymin, ymax),
+                    slice(xmin, xmax),
+                )
             elif N_dim == 3:
                 region = (slice(None), slice(ymin, ymax), slice(xmin, xmax))
-            # regions.append(region)
             task_queue.put(region)
-    logging.info(f'Number of regions to process in parallel: {task_queue.qsize()}')
-
-    # Large sequential update regions
-    # for r in regions:
-    #     Qin = Qdata[r[0], r[1], r[2], r[3]]
-    #     Uin = Udata[r[0], r[1], r[2], r[3]]
-    #     Qcorr, Ucorr = correct_cubes(Qin, Uin, theta)
-    #     Qdata[r[0], r[1], r[2], r[3]] = Qcorr
-    #     Udata[r[0], r[1], r[2], r[3]] = Ucorr
+    logging.info(f"Number of regions to process in parallel: {task_queue.qsize()}")
 
     # Run in process pool
-    logging.info('Starting parallel region')
-    logging.info(f'Main process id: {os.getpid()}')
+    logging.info("Starting parallel region")
+    logging.info(f"Main process id: {os.getpid()}")
     for pid in range(n_processes):
         p = mp.Process(
-            target=pool_correct_task,
-            args=(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue, complete_queue)
+            target=correct_task,
+            args=(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue),
         )
         processes.append(p)
         p.start()
 
     for p in processes:
         p.join()
-    logging.info('Finished parallel region')
-    logging.info('Write complete')
+    logging.info("Finished parallel region")
+    logging.info("Write complete")
 
 
 def command_line():
