@@ -339,12 +339,14 @@ def apply_correction_large_cube(
         fobj.write(b"\0")
 
     # Need to decide how to split the cube
+    # TODO: make this a user specified parameter
     nsplit_x = 10
     nsplit_y = 10
     size_x = ceil(int(output_header["NAXIS1"]) / nsplit_x)
     size_y = ceil(int(output_header["NAXIS2"]) / nsplit_y)
 
     # multiprocessing
+    # TODO: make this a user specified parameter
     n_processes = 4
     processes = []
     m = mp.Manager()
