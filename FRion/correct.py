@@ -252,7 +252,7 @@ def correct_task(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue):
 
 
 def apply_correction_large_cube(
-    Qfile, Ufile, predictionfile, Qoutfile, Uoutfile, overwrite=False
+    Qfile, Ufile, predictionfile, Qoutfile, Uoutfile, ncores, nx, ny, overwrite=False
 ):
     """Functions as apply_correction_to_files, but for files too large to
     hold in memory. Combines the correct_cubes() and write_corrected_cubes()
@@ -274,6 +274,8 @@ def apply_correction_large_cube(
         overwrite (bool): overwrite Stokes Q/U files if they already exist? [False]
 
     """
+    logging.info("Ionspheric correction using large-mode")
+    logging.info(f'Number of cores: {ncores}')
 
     # Get all data:
     frequencies, theta = read_prediction(predictionfile)
@@ -283,6 +285,8 @@ def apply_correction_large_cube(
     Qdata = hdulistQ[0].data
     hdulistU = pf.open(Ufile, memmap=True)
     Udata = hdulistU[0].data
+
+    logging.info(f'Splitting full sized cube {Qdata.shape} in x by {nx}, by y in {ny}')
 
     N_dim = header["NAXIS"]  # Get number of axes
     freq_axis = find_freq_axis(header)
@@ -339,30 +343,26 @@ def apply_correction_large_cube(
         fobj.write(b"\0")
 
     # Need to decide how to split the cube
-    # TODO: make this a user specified parameter
-    nsplit_x = 10
-    nsplit_y = 10
-    size_x = ceil(int(output_header["NAXIS1"]) / nsplit_x)
-    size_y = ceil(int(output_header["NAXIS2"]) / nsplit_y)
+    size_x = ceil(int(output_header["NAXIS1"]) / nx)
+    size_y = ceil(int(output_header["NAXIS2"]) / ny)
 
     # multiprocessing
-    # TODO: make this a user specified parameter
-    n_processes = 4
+    ncores = 4
     processes = []
     m = mp.Manager()
     lock = mp.Lock()
     task_queue = m.Queue()
 
     # Get subcubes
-    for i in range(nsplit_x):
+    for i in range(nx):
         xmin = i * size_x
         xmax = (i + 1) * size_x
-        if i + 1 == nsplit_x:
+        if i + 1 == nx:
             xmax = int(output_header["NAXIS1"])
-        for j in range(nsplit_y):
+        for j in range(ny):
             ymin = j * size_y
             ymax = (j + 1) * size_y
-            if j + 1 == nsplit_y:
+            if j + 1 == ny:
                 ymax = int(output_header["NAXIS2"])
             if N_dim == 4:
                 region = (
@@ -379,7 +379,7 @@ def apply_correction_large_cube(
     # Run in process pool
     logging.info("Starting parallel region")
     logging.info(f"Main process id: {os.getpid()}")
-    for pid in range(n_processes):
+    for pid in range(ncores):
         p = mp.Process(
             target=correct_task,
             args=(Qoutfile, Uoutfile, Qdata, Udata, theta, lock, task_queue),
@@ -450,7 +450,30 @@ def command_line():
         action="store_true",
         help="Use large-file mode? (Reduced memory footprint) [False]",
     )
-
+    parser.add_argument(
+        "-n",
+        type=int,
+        dest="ncores",
+        help="Number of cores to parallelise large-file mode job [4]",
+        required=False,
+        default=4
+    )
+    parser.add_argument(
+        "-nx",
+        type=int,
+        dest="nx",
+        help="Number of sub-cubes to split full sized cube into in x dimension [10]",
+        required=False,
+        default=10
+    )
+    parser.add_argument(
+        "-ny",
+        type=int,
+        dest="ny",
+        help="Number of sub-cubes to split full sized cube into in y dimension [10]",
+        required=False,
+        default=10
+    )
     args = parser.parse_args()
 
     # Check for file existence.
@@ -458,6 +481,10 @@ def command_line():
         raise Exception("Stokes Q file not found.")
     if not os.path.isfile(args.fitsU):
         raise Exception("Stokes U file not found.")
+
+    # Check number of cores available greater than requested
+    if args.ncores > os.cpu_count():
+        raise Exception(f"Requesting more CPU cores {args.ncores} than available {os.cpu_count()}")
 
     # Pass file names into do-everything function (either basic or large-file, as
     # set by user.
@@ -468,6 +495,9 @@ def command_line():
             args.predictionfile,
             args.outQ,
             args.outU,
+            args.ncores,
+            args.nx,
+            args.ny,
             overwrite=args.overwrite,
         )
     else:
